@@ -49,6 +49,10 @@ class PokerApp:
         
         self.btn_calc = ttk.Button(root, text="🚀 Calculer les Statistiques", command=self.start_calculation)
         self.btn_calc.pack(pady=15, fill="x")
+
+        # Bouton légende
+        self.btn_legend = ttk.Button(root, text="ℹ️ Légende", command=self.show_legend)
+        self.btn_legend.pack(pady=(0,10))
         
         self.frame_visuals = tk.Frame(root)
         self.frame_visuals.pack(pady=5)
@@ -80,6 +84,15 @@ class PokerApp:
         
         self.lbl_advice = tk.Label(self.frame_results, text="Saisissez vos paramètres et lancez le calcul.", font=("Helvetica", 10, "italic"), justify="left")
         self.lbl_advice.pack(anchor="w", pady=5)
+
+        # Tableau des probabilités par catégorie de main
+        tk.Label(self.frame_results, text="Probabilités par catégorie de main :", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(8,2))
+        self.tree_probs = ttk.Treeview(self.frame_results, columns=("hand","prob"), show="headings", height=8)
+        self.tree_probs.heading("hand", text="Catégorie")
+        self.tree_probs.heading("prob", text="Probabilité %")
+        self.tree_probs.column("hand", width=200, anchor="w")
+        self.tree_probs.column("prob", width=120, anchor="e")
+        self.tree_probs.pack(fill="x", pady=2)
 
     def draw_cards(self, frame, cards_str_list, title):
         for widget in frame.winfo_children():
@@ -151,11 +164,29 @@ class PokerApp:
         
         threading.Thread(target=self.run_simulation, args=(my_hand, my_board, nb_opponents, sb, bb), daemon=True).start()
 
+    def show_legend(self):
+        """Affiche une fenêtre expliquant la notation des cartes en français."""
+        msg = (
+            "Notation des cartes :\n\n"
+            "Format : Valeur + Couleur (sans espace).\n"
+            "Valeurs : 2-9, T = 10, J = Valet, Q = Dame, K = Roi, A = As.\n"
+            "Couleurs : s = pique, h = coeur, d = carreau, c = trèfle.\n\n"
+            "Exemples :\n"
+            "  Ah -> As de coeur\n"
+            "  Ks -> Roi de pique\n"
+            "  Td -> 10 de carreau\n\n"
+            "Pour une main : entrez 2 cartes séparées par un espace, ex : 'Ah Ks'\n"
+            "Pour la table : 0, 3, 4 ou 5 cartes séparées par des espaces, ex : '2h 7s Td'"
+        )
+        messagebox.showinfo("Légende - Notation des cartes", msg)
+
     def run_simulation(self, my_hand, my_board, nb_opponents, sb, bb):
         from treys import Evaluator, Deck
         evaluator = Evaluator()
         wins = 0
         ties = 0
+        # Compteur des classes de mains (pour le tableau de probabilités)
+        hand_class_counts = {}
         num_simulations = 10000
 
         for _ in range(num_simulations):
@@ -177,6 +208,15 @@ class PokerApp:
                     board.append(drawn)
             
             my_score = evaluator.evaluate(board, my_hand)
+            # classe de la main finale (ex: Straight, Flush, ...)
+            try:
+                cls = evaluator.get_rank_class(my_score)
+            except Exception:
+                # fallback si l'API diffère
+                cls = None
+
+            if cls is not None:
+                hand_class_counts[cls] = hand_class_counts.get(cls, 0) + 1
             opp_scores = [evaluator.evaluate(board, opp) for opp in opp_hands]
             best_opp_score = min(opp_scores)
             
@@ -195,9 +235,14 @@ class PokerApp:
         gain_net = pot_final - mise_joueur
         ev = ((win_rate/100) * gain_net) - ((loss_rate/100) * mise_joueur)
         
-        self.root.after(0, self.update_ui, win_rate, tie_rate, loss_rate, ev, mise_joueur)
+        # Calculer les pourcentages par classe et transmettre à l'UI
+        hand_probs = {}
+        for cls, count in hand_class_counts.items():
+            hand_probs[cls] = (count / num_simulations) * 100
 
-    def update_ui(self, win_rate, tie_rate, loss_rate, ev, mise_joueur):
+        self.root.after(0, self.update_ui, win_rate, tie_rate, loss_rate, ev, mise_joueur, hand_probs)
+
+    def update_ui(self, win_rate, tie_rate, loss_rate, ev, mise_joueur, hand_probs=None):
         self.progress.stop()
         self.progress.pack_forget()
         self.btn_calc.config(state="normal")
@@ -212,6 +257,45 @@ class PokerApp:
             self.lbl_advice.config(text=f"✅ ACTION RENTABLE (EV+) :\nRelancer à {mise_joueur} jetons (3x BB) a un\nretour sur investissement positif à long terme.", fg="green")
         else:
             self.lbl_advice.config(text=f"❌ ACTION DÉFICITAIRE (EV-) :\nInvestir {mise_joueur} jetons (3x BB) pre-flop\navec cette main est une erreur mathématique.", fg="red")
+
+        # Mettre à jour le tableau des probabilités
+        for i in self.tree_probs.get_children():
+            self.tree_probs.delete(i)
+
+        if hand_probs:
+            # Essayer d'obtenir les noms via treys si disponible, sinon fallback FR
+            try:
+                from treys import Evaluator
+                def cls_name(k):
+                    try:
+                        return Evaluator.class_to_string(k)
+                    except Exception:
+                        return None
+            except Exception:
+                def cls_name(k):
+                    return None
+
+            fallback = {
+                1: "Quinte Flush Royale",
+                2: "Quinte Flush",
+                3: "Carré",
+                4: "Full",
+                5: "Couleur",
+                6: "Quinte",
+                7: "Brelan",
+                8: "Deux Paires",
+                9: "Paire",
+                10: "Carte haute",
+            }
+
+            # Trier par classe (meilleure -> pire) si possible
+            for cls in sorted(hand_probs.keys()):
+                name = cls_name(cls) or fallback.get(cls, f"Classe {cls}")
+                prob = hand_probs.get(cls, 0.0)
+                self.tree_probs.insert("", "end", values=(name, f"{prob:.2f}%"))
+        else:
+            # Rien à afficher
+            pass
 
 if __name__ == "__main__":
     root = tk.Tk()
