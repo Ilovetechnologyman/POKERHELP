@@ -2,6 +2,9 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import threading
 
+from training import TrainingModule
+
+
 try:
     from treys import Card, Evaluator, Deck
 except ImportError:
@@ -11,77 +14,92 @@ class PokerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Calculateur Poker - Probabilités et EV")
-        self.root.geometry("500x750")
+        self.root.geometry("1000x800")
+        self.root.minsize(800,600)
         self.root.configure(padx=20, pady=20)
-        
+
         style = ttk.Style()
         if "clam" in style.theme_names():
             style.theme_use("clam")
-        
-        tk.Label(root, text="Poker Stats & EV Calculator", font=("Helvetica", 16, "bold")).pack(pady=10)
-        
-        frame_inputs = ttk.LabelFrame(root, text="Paramètres", padding=15)
+
+        # Notebook pour onglets
+        self.notebook = ttk.Notebook(self.root)
+        self.calc_tab = ttk.Frame(self.notebook)
+        self.train_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.calc_tab, text="Calculateur")
+        self.notebook.add(self.train_tab, text="Entraînement")
+        self.notebook.pack(fill="both", expand=True)
+
+        tk.Label(self.calc_tab, text="Poker Stats & EV Calculator", font=("Helvetica", 16, "bold")).pack(pady=10)
+
+        frame_inputs = ttk.LabelFrame(self.calc_tab, text="Paramètres", padding=15)
         frame_inputs.pack(fill="x", pady=10)
-        
+
         tk.Label(frame_inputs, text="Votre main (ex: Ah Ks) :", font=("Helvetica", 10)).grid(row=0, column=0, sticky="w", pady=5)
         self.entry_hand = ttk.Entry(frame_inputs, width=15)
         self.entry_hand.grid(row=0, column=1, sticky="w", pady=5)
         self.entry_hand.insert(0, "Ah Ks")
-        
+
         tk.Label(frame_inputs, text="Table (Optionnel, ex: 2h 7s Td) :", font=("Helvetica", 10)).grid(row=1, column=0, sticky="w", pady=5)
         self.entry_board = ttk.Entry(frame_inputs, width=15)
         self.entry_board.grid(row=1, column=1, sticky="w", pady=5)
-        
+
         tk.Label(frame_inputs, text="Adversaires (1-3) :", font=("Helvetica", 10)).grid(row=2, column=0, sticky="w", pady=5)
         self.entry_opponents = ttk.Entry(frame_inputs, width=15)
         self.entry_opponents.insert(0, "2")
         self.entry_opponents.grid(row=2, column=1, sticky="w", pady=5)
-        
+
         tk.Label(frame_inputs, text="Petite Blinde (SB) :", font=("Helvetica", 10)).grid(row=3, column=0, sticky="w", pady=5)
         self.entry_sb = ttk.Entry(frame_inputs, width=15)
         self.entry_sb.insert(0, "1")
         self.entry_sb.grid(row=3, column=1, sticky="w", pady=5)
-        
+
         tk.Label(frame_inputs, text="Grosse Blinde (BB) :", font=("Helvetica", 10)).grid(row=4, column=0, sticky="w", pady=5)
         self.entry_bb = ttk.Entry(frame_inputs, width=15)
         self.entry_bb.insert(0, "2")
         self.entry_bb.grid(row=4, column=1, sticky="w", pady=5)
-        
-        self.btn_calc = ttk.Button(root, text="🚀 Calculer les Statistiques", command=self.start_calculation)
+
+        self.btn_calc = ttk.Button(self.calc_tab, text="🚀 Calculer les Statistiques", command=self.start_calculation)
         self.btn_calc.pack(pady=15, fill="x")
 
         # Bouton légende
-        self.btn_legend = ttk.Button(root, text="ℹ️ Légende", command=self.show_legend)
+        self.btn_legend = ttk.Button(self.calc_tab, text="ℹ️ Légende", command=self.show_legend)
         self.btn_legend.pack(pady=(0,10))
-        
-        self.frame_visuals = tk.Frame(root)
+
+        # Module d'entraînement externalisé (placé dans l'onglet Entraînement)
+        self.training = TrainingModule(self.train_tab, root=self.root)
+
+        # keep references to PhotoImage to avoid GC
+        self.card_image_refs = {}
+
+        self.frame_visuals = tk.Frame(self.calc_tab)
         self.frame_visuals.pack(pady=5)
-        
+
         self.frame_hand_display = tk.Frame(self.frame_visuals)
         self.frame_hand_display.grid(row=0, column=0, padx=10, sticky="n")
-        
+
         self.frame_board_display = tk.Frame(self.frame_visuals)
         self.frame_board_display.grid(row=0, column=1, padx=10, sticky="n")
-        
-        self.progress = ttk.Progressbar(root, mode='indeterminate')
-        
-        self.frame_results = ttk.LabelFrame(root, text="Résultats (sur 10 000 simulations)", padding=15)
+
+        self.progress = ttk.Progressbar(self.calc_tab, mode='indeterminate')
+
+        self.frame_results = ttk.LabelFrame(self.calc_tab, text="Résultats (sur 10 000 simulations)", padding=15)
         self.frame_results.pack(fill="both", expand=True, pady=10)
-        
+
         self.lbl_win = tk.Label(self.frame_results, text="Victoire : --", font=("Helvetica", 12, "bold"), fg="green")
         self.lbl_win.pack(anchor="w", pady=2)
-        
+
         self.lbl_tie = tk.Label(self.frame_results, text="Égalité : --", font=("Helvetica", 12))
         self.lbl_tie.pack(anchor="w", pady=2)
-        
+
         self.lbl_loss = tk.Label(self.frame_results, text="Défaite : --", font=("Helvetica", 12, "bold"), fg="red")
         self.lbl_loss.pack(anchor="w", pady=2)
-        
+
         ttk.Separator(self.frame_results, orient="horizontal").pack(fill="x", pady=10)
-        
+
         self.lbl_ev = tk.Label(self.frame_results, text="Espérance (EV) : --", font=("Helvetica", 12, "bold"))
         self.lbl_ev.pack(anchor="w", pady=2)
-        
+
         self.lbl_advice = tk.Label(self.frame_results, text="Saisissez vos paramètres et lancez le calcul.", font=("Helvetica", 10, "italic"), justify="left")
         self.lbl_advice.pack(anchor="w", pady=5)
 
@@ -105,16 +123,35 @@ class PokerApp:
         
         suits = {'s': ('♠', 'black'), 'h': ('♥', '#d60000'), 'd': ('♦', '#d60000'), 'c': ('♣', 'black')}
         
-        for c in cards_str_list:
-            if len(c) == 2:
-                val, suit = c[0].upper(), c[1].lower()
-                if val == 'T': val = '10'
-                
-                symbol, color = suits.get(suit, ('?', 'black'))
-                
-                card_lbl = tk.Label(cards_frame, text=f"{val}\n{symbol}", font=("Arial", 16, "bold"), 
-                                    bg="white", fg=color, relief="solid", borderwidth=1, width=3, height=2)
-                card_lbl.pack(side="left", padx=3)
+        # try to display images (use training module helper), fallback to text cards
+        imgs = []
+        for idx, c in enumerate(cards_str_list):
+            # attempt image via training module
+            img = None
+            try:
+                img = self.training._get_card_photo(c)
+            except Exception:
+                img = None
+
+            if img:
+                lbl = tk.Label(cards_frame, image=img, bd=1, relief="raised")
+                lbl.image = img
+                lbl.pack(side="left", padx=3)
+                imgs.append(img)
+            else:
+                if len(c) == 2:
+                    val, suit = c[0].upper(), c[1].lower()
+                    if val == 'T': val = '10'
+                    symbol, color = suits.get(suit, ('?', 'black'))
+                    card_lbl = tk.Label(cards_frame, text=f"{val}\n{symbol}", font=("Arial", 16, "bold"), 
+                                        bg="white", fg=color, relief="solid", borderwidth=1, width=3, height=2)
+                    card_lbl.pack(side="left", padx=3)
+                else:
+                    card_lbl = tk.Label(cards_frame, text=c, font=("Arial", 14), bg="white", relief="solid", borderwidth=1, width=4, height=2)
+                    card_lbl.pack(side="left", padx=3)
+
+        # keep references to avoid garbage collection
+        self.card_image_refs[frame] = imgs
 
     def start_calculation(self):
         hand_str = self.entry_hand.get().strip().split()
